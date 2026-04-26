@@ -362,13 +362,13 @@ def procesar_santander_rio_prueba(archivo_pdf, cuits_propios=None):
 
         # GENERALES: se chequean DESPUÉS de los CUITs propios
         CATEGORIAS_GENERALES = [
+            ("Comisiones",               ["comision", "comisión"]),
             ("Compras Con Débito",       ["compra con tarjeta de debito", "compra con debito", "compra con deb", "compra debito"]),
             ("Transf. Online Banking",   ["transf. online banking", "transf online banking"]),
             ("Transferencias",           ["transferencia", "pagos ctas propias"]),
             ("Haberes",                  ["haberes", "haber"]),
             ("Impuestos",                ["impuesto", "iibb", "imp."]),
             ("IVA",                      ["iva"]),
-            ("Comisiones",               ["comision", "comisión"]),
             ("Cheques",                  ["cheque"]),
             ("Depósitos",                ["deposito", "depósito"]),
             ("Cajero Automático",        ["cajero", "atm"]),
