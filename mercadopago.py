@@ -3,6 +3,7 @@ import PyPDF2
 import re
 import pandas as pd
 import io
+import sys
 
 
 def limpiar_nombre_hoja(nombre):
@@ -30,8 +31,18 @@ def procesar_mercadopago(archivo_pdf):
         # Abrir y leer el archivo PDF
         reader = PyPDF2.PdfReader(io.BytesIO(archivo_pdf.read()))
         texto = "".join(page.extract_text() + "\n" for page in reader.pages)
-        
+
         lineas = texto.splitlines()
+
+        print(
+            f"[MercadoPago] file={getattr(archivo_pdf, 'name', '?')} "
+            f"size={getattr(archivo_pdf, 'size', '?')} "
+            f"pypdf2={PyPDF2.__version__} pages={len(reader.pages)} "
+            f"text_len={len(texto)} "
+            f"has_saldo_inicial={'saldo inicial' in texto.lower()} "
+            f"has_saldo_final={'saldo final' in texto.lower()}",
+            file=sys.stderr, flush=True,
+        )
 
         # Variables para corte de página (descripción huérfana)
         prefijo_pendiente = ""
@@ -44,6 +55,15 @@ def procesar_mercadopago(archivo_pdf):
         nombre_titular = None
         cvu = None
         periodo = None
+
+        # Detección de saldos sobre el texto completo (tolerante a saltos de
+        # línea o espaciado raro de PyPDF2 entre containers de Streamlit Cloud).
+        m_ini = re.search(r"Saldo\s+inicial\s*:\s*\$?\s*([\d.,]+)", texto, re.IGNORECASE)
+        if m_ini:
+            saldo_inicial = m_ini.group(1)
+        m_fin = re.search(r"Saldo\s+final\s*:\s*\$?\s*([\d.,]+)", texto, re.IGNORECASE)
+        if m_fin:
+            saldo_final = m_fin.group(1)
 
         # Procesar líneas
         i = 0
@@ -79,18 +99,6 @@ def procesar_mercadopago(archivo_pdf):
                 cvu_match = re.search(r"CVU:\s*(\d+)", linea)
                 if cvu_match:
                     cvu = cvu_match.group(1)
-
-            # Extraer saldo inicial
-            if "Saldo inicial:" in linea:
-                saldo_match = re.search(r"Saldo inicial:\s*\$\s*([\d,.]+)", linea)
-                if saldo_match:
-                    saldo_inicial = saldo_match.group(1)
-
-            # Extraer saldo final
-            if "Saldo final:" in linea:
-                saldo_match = re.search(r"Saldo final:\s*\$\s*([\d,.]+)", linea)
-                if saldo_match:
-                    saldo_final = saldo_match.group(1)
 
             match_fecha_inicio = re.search(r"(\d{2}-\d{2}-\d{4})", linea)
             
@@ -653,7 +661,16 @@ def procesar_mercadopago(archivo_pdf):
                 st.error(f"Error creando archivo Excel: {str(e)}")
                 return None
         else:
-            st.warning("No se encontraron saldos inicial y final en el PDF")
+            falta = []
+            if not saldo_inicial:
+                falta.append("inicial")
+            if not saldo_final:
+                falta.append("final")
+            menciones = re.findall(r"(?i)saldo[^\n]{0,60}", texto)[:5]
+            st.warning(
+                f"No se encontró saldo {' y '.join(falta)}. "
+                f"Primeras menciones de 'Saldo' en el PDF extraído: {menciones}"
+            )
             return None
 
     except Exception as e:
