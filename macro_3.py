@@ -72,17 +72,26 @@ def _split_lineas_fusionadas(lineas):
 def _nombre_hoja(nombre_cuenta, idx):
     """Genera un nombre de hoja Excel válido (max 31 chars)."""
     nombre = nombre_cuenta.upper()
-    if "DOLAR" in nombre:
-        short = "CC Dolares"
-    elif "ESPECIAL" in nombre and "PESOS" in nombre:
-        short = "CC Esp Pesos"
-    elif "BANCARIA" in nombre:
-        short = "CC Bancaria"
-    elif "PESOS" in nombre:
-        short = "CC Pesos"
+    if "CAJA" in nombre and "AHORRO" in nombre:
+        prefix = "CA"
+    elif "CUENTA" in nombre and "CORRIENTE" in nombre:
+        prefix = "CC"
     else:
-        short = f"Cuenta {idx+1}"
-    
+        prefix = "Cuenta"
+
+    if "DOLAR" in nombre:
+        suf = "Dolares"
+    elif "ESPECIAL" in nombre and "PESOS" in nombre:
+        suf = "Esp Pesos"
+    elif "BANCARIA" in nombre:
+        suf = "Bancaria"
+    elif "PESOS" in nombre:
+        suf = "Pesos"
+    else:
+        suf = str(idx + 1)
+
+    short = f"{prefix} {suf}"
+
     # Asegurar max 31 chars
     return short[:31]
 
@@ -333,7 +342,7 @@ def procesar_macro_formato_3(archivo_pdf):
         umbral = _detectar_umbral(lineas)
         
         # === PARSEO POR CUENTAS ===
-        re_cuenta_header = re.compile(r'(CUENTA\s+CORRIENTE.*?)NRO\.:\s*(\S+)', re.IGNORECASE)
+        re_cuenta_header = re.compile(r'(.+?\s+EN\s+(?:PESOS|D[OÓ]LARES)\s*)NRO\.:\s*(\S+)', re.IGNORECASE)
         re_fecha = re.compile(r'^\s*(\d{2}/\d{2}/\d{2})\s+(.*)')
         re_monto = re.compile(r'-?\d{1,3}(?:\.\d{3})*,\d{2}')
         
