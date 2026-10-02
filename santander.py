@@ -182,10 +182,12 @@ def procesar_santander_rio(archivo_pdf):
                     else:
                         desc = resto
 
-                    # Limpieza extra: Quitar numeros pegados al inicio (ej: 77367269Transferencia)
+                    # El comprobante son los numeros pegados al inicio (ej: 77367269Transferencia)
+                    m_comp = re.match(r'^(\d+)', desc)
+                    comprobante = m_comp.group(1) if m_comp else ""
                     desc = re.sub(r'^\d+', '', desc).strip()
 
-                    parsed_data.append((fecha, clean_for_excel(desc), importe))
+                    parsed_data.append((fecha, comprobante, clean_for_excel(desc), importe))
 
                 elif len(montos) == 1:
                     # Solo hay un monto, puede ser saldo inicial o algo raro.
@@ -223,15 +225,15 @@ def procesar_santander_rio(archivo_pdf):
             ws = wb.create_sheet(title=nombre_hoja)
             ws.sheet_view.showGridLines = False
             
-            df = pd.DataFrame(datos, columns=["Fecha", "Descripcion", "Importe"])
-            
+            df = pd.DataFrame(datos, columns=["Fecha", "Comprobante", "Descripcion", "Importe"])
+
             creditos = df[df["Importe"] > 0].copy()
             debitos = df[df["Importe"] < 0].copy()
             debitos["Importe"] = debitos["Importe"].abs() # Positivo para mostrar
-            
+
             if df.empty:
-                creditos = pd.DataFrame(columns=["Fecha", "Descripcion", "Importe"])
-                debitos = pd.DataFrame(columns=["Fecha", "Descripcion", "Importe"])
+                creditos = pd.DataFrame(columns=["Fecha", "Comprobante", "Descripcion", "Importe"])
+                debitos = pd.DataFrame(columns=["Fecha", "Comprobante", "Descripcion", "Importe"])
 
             # Header
             ws.merge_cells("A1:G1")
@@ -275,73 +277,77 @@ def procesar_santander_rio(archivo_pdf):
             # Tablas
             f_header = 10
             # Creditos
-            ws.merge_cells(f"A{f_header}:C{f_header}"); ws[f"A{f_header}"] = "CRÉDITOS"
+            ws.merge_cells(f"A{f_header}:D{f_header}"); ws[f"A{f_header}"] = "CRÉDITOS"
             ws[f"A{f_header}"].fill = fill_head_cred; ws[f"A{f_header}"].font = Font(bold=True, color="FFFFFF")
             ws[f"A{f_header}"].alignment = Alignment(horizontal="center", vertical="center")
             # Debitos
-            ws.merge_cells(f"E{f_header}:G{f_header}"); ws[f"E{f_header}"] = "DÉBITOS"
-            ws[f"E{f_header}"].fill = fill_head_deb; ws[f"E{f_header}"].font = Font(bold=True, color="FFFFFF")
-            ws[f"E{f_header}"].alignment = Alignment(horizontal="center", vertical="center")
-            
+            ws.merge_cells(f"F{f_header}:I{f_header}"); ws[f"F{f_header}"] = "DÉBITOS"
+            ws[f"F{f_header}"].fill = fill_head_deb; ws[f"F{f_header}"].font = Font(bold=True, color="FFFFFF")
+            ws[f"F{f_header}"].alignment = Alignment(horizontal="center", vertical="center")
+
             # Subheaders
-            for col, txt in zip(["A","B","C", "E","F","G"], ["Fecha","Descripción","Importe", "Fecha","Descripción","Importe"]):
+            cols_cred = ["A","B","C","D"]
+            cols_deb = ["F","G","H","I"]
+            headers = ["Fecha","Comprobante","Descripción","Importe"]
+            for col, txt in zip(cols_cred + cols_deb, headers + headers):
                 ws[f"{col}{f_header+1}"] = txt
                 ws[f"{col}{f_header+1}"].border = thin_border
                 ws[f"{col}{f_header+1}"].alignment = Alignment(horizontal='center')
-                if col in ["A","B","C"]: ws[f"{col}{f_header+1}"].fill = fill_col_cred
+                if col in cols_cred: ws[f"{col}{f_header+1}"].fill = fill_col_cred
                 else: ws[f"{col}{f_header+1}"].fill = fill_col_deb
-            
+
             # Llenar Creditos
             row = f_header + 2
             start_cred = row
             if creditos.empty:
-                ws[f"A{row}"] = "SIN MOVIMIENTOS"; ws.merge_cells(f"A{row}:C{row}")
+                ws[f"A{row}"] = "SIN MOVIMIENTOS"; ws.merge_cells(f"A{row}:D{row}")
                 ws[f"A{row}"].alignment = Alignment(horizontal='center'); ws[f"A{row}"].font = Font(italic=True, color="666666")
                 row += 1
             else:
                 for _, r in creditos.iterrows():
-                    ws[f"A{row}"] = r["Fecha"]; ws[f"B{row}"] = r["Descripcion"]; ws[f"C{row}"] = r["Importe"]
-                    ws[f"C{row}"].number_format = formato_moneda
-                    for c in ["A","B","C"]: ws[f"{c}{row}"].border = thin_border; ws[f"{c}{row}"].fill = fill_row_cred
+                    ws[f"A{row}"] = r["Fecha"]; ws[f"B{row}"] = r["Comprobante"]; ws[f"C{row}"] = r["Descripcion"]; ws[f"D{row}"] = r["Importe"]
+                    ws[f"D{row}"].number_format = formato_moneda
+                    for c in cols_cred: ws[f"{c}{row}"].border = thin_border; ws[f"{c}{row}"].fill = fill_row_cred
                     row += 1
-            
+
             total_cred_row = row
-            ws.merge_cells(f"A{total_cred_row}:B{total_cred_row}")
+            ws.merge_cells(f"A{total_cred_row}:C{total_cred_row}")
             ws[f"A{total_cred_row}"] = "TOTAL CRÉDITOS"
             ws[f"A{total_cred_row}"].font = Font(bold=True); ws[f"A{total_cred_row}"].alignment = Alignment(horizontal='right')
-            ws[f"C{total_cred_row}"] = f"=SUM(C{start_cred}:C{total_cred_row-1})"
-            ws[f"C{total_cred_row}"].number_format = formato_moneda; ws[f"C{total_cred_row}"].font = Font(bold=True)
-            for c in ["A","B","C"]: ws[f"{c}{total_cred_row}"].border = thin_border
-            
+            ws[f"D{total_cred_row}"] = f"=SUM(D{start_cred}:D{total_cred_row-1})"
+            ws[f"D{total_cred_row}"].number_format = formato_moneda; ws[f"D{total_cred_row}"].font = Font(bold=True)
+            for c in cols_cred: ws[f"{c}{total_cred_row}"].border = thin_border
+
             # Llenar Debitos
             row = f_header + 2
             start_deb = row
             if debitos.empty:
-                ws[f"E{row}"] = "SIN MOVIMIENTOS"; ws.merge_cells(f"E{row}:G{row}")
-                ws[f"E{row}"].alignment = Alignment(horizontal='center'); ws[f"E{row}"].font = Font(italic=True, color="666666")
+                ws[f"F{row}"] = "SIN MOVIMIENTOS"; ws.merge_cells(f"F{row}:I{row}")
+                ws[f"F{row}"].alignment = Alignment(horizontal='center'); ws[f"F{row}"].font = Font(italic=True, color="666666")
                 row += 1
             else:
                 for _, r in debitos.iterrows():
-                    ws[f"E{row}"] = r["Fecha"]; ws[f"F{row}"] = r["Descripcion"]; ws[f"G{row}"] = r["Importe"]
-                    ws[f"G{row}"].number_format = formato_moneda
-                    for c in ["E","F","G"]: ws[f"{c}{row}"].border = thin_border; ws[f"{c}{row}"].fill = fill_row_deb
+                    ws[f"F{row}"] = r["Fecha"]; ws[f"G{row}"] = r["Comprobante"]; ws[f"H{row}"] = r["Descripcion"]; ws[f"I{row}"] = r["Importe"]
+                    ws[f"I{row}"].number_format = formato_moneda
+                    for c in cols_deb: ws[f"{c}{row}"].border = thin_border; ws[f"{c}{row}"].fill = fill_row_deb
                     row += 1
-            
+
             total_deb_row = row
-            ws.merge_cells(f"E{total_deb_row}:F{total_deb_row}")
-            ws[f"E{total_deb_row}"] = "TOTAL DÉBITOS"
-            ws[f"E{total_deb_row}"].font = Font(bold=True); ws[f"E{total_deb_row}"].alignment = Alignment(horizontal='right')
-            ws[f"G{total_deb_row}"] = f"=SUM(G{start_deb}:G{total_deb_row-1})"
-            ws[f"G{total_deb_row}"].number_format = formato_moneda; ws[f"G{total_deb_row}"].font = Font(bold=True)
-            for c in ["E","F","G"]: ws[f"{c}{total_deb_row}"].border = thin_border
+            ws.merge_cells(f"F{total_deb_row}:H{total_deb_row}")
+            ws[f"F{total_deb_row}"] = "TOTAL DÉBITOS"
+            ws[f"F{total_deb_row}"].font = Font(bold=True); ws[f"F{total_deb_row}"].alignment = Alignment(horizontal='right')
+            ws[f"I{total_deb_row}"] = f"=SUM(I{start_deb}:I{total_deb_row-1})"
+            ws[f"I{total_deb_row}"].number_format = formato_moneda; ws[f"I{total_deb_row}"].font = Font(bold=True)
+            for c in cols_deb: ws[f"{c}{total_deb_row}"].border = thin_border
 
             # Update Control Formula final
-            ws["D7"] = f"=ROUND(B3+C{total_cred_row}-G{total_deb_row}-B4, 2)"
+            ws["D7"] = f"=ROUND(B3+D{total_cred_row}-I{total_deb_row}-B4, 2)"
             ws["D7"].number_format = formato_moneda
-            
+
             # Anchos
-            ws.column_dimensions["B"].width = 40; ws.column_dimensions["F"].width = 40
-            ws.column_dimensions["C"].width = 18; ws.column_dimensions["G"].width = 18
+            ws.column_dimensions["B"].width = 14; ws.column_dimensions["G"].width = 14
+            ws.column_dimensions["C"].width = 40; ws.column_dimensions["H"].width = 40
+            ws.column_dimensions["D"].width = 18; ws.column_dimensions["I"].width = 18
 
         # Crear hoja Pesos
         crear_hoja_dashboard(wb, "Pesos", datos_pesos, saldo_ini_pesos, saldo_fin_pesos, formato_moneda='"$ "#,##0.00')
