@@ -27,29 +27,60 @@ def procesar_supervielle(archivo_pdf):
             texto = "".join(page.extract_text() + "\n" for page in reader.pages)
             lineas = texto.splitlines()
 
+            # --- Detección automática de formato numérico ---
+            # Algunos extractos Supervielle vienen en formato AR (1.234,56) y
+            # otros en formato US (1,234.56). Se detecta por frecuencia en el texto.
+            count_us = len(re.findall(r'\d{1,3}(?:,\d{3})+\.\d{2}', texto))
+            count_ar = len(re.findall(r'\d{1,3}(?:\.\d{3})+,\d{2}', texto))
+            formato_us = count_us > count_ar
+
+            if formato_us:
+                pattern_monto = re.compile(r'-?\d{1,3}(?:,\d{3})*\.\d{2}-?')
+                def parse_monto_local(s):
+                    neg = s.startswith('-') or s.endswith('-')
+                    s = s.strip('-')
+                    val = float(s.replace(',', ''))
+                    return -val if neg else val
+            else:
+                pattern_monto = re.compile(r'-?\d{1,3}(?:\.\d{3})*,\d{2}-?')
+                def parse_monto_local(s):
+                    neg = s.startswith('-') or s.endswith('-')
+                    s = s.strip('-')
+                    val = float(s.replace('.', '').replace(',', '.'))
+                    return -val if neg else val
+
             capturar = False
             numero_de_cuenta_temporal = ""
             movimientos = []
             cuentas = []
             periodo_global = "S/D"
             titular_global = "S/D"
+            linea_previa = ""
 
             for linea in lineas:
                 # Extracción de HEADER GLOBAL (Periodo y Titular)
                 # L10: 'RESUMEN DE CUENTA DESDE 01/03/23 HASTA 31/03/23'
                 if "RESUMEN DE CUENTA DESDE" in linea:
                     periodo_global = linea.replace("RESUMEN DE CUENTA ", "").strip()
-                
+
                 # L19: 'BURSTEIN NORBERTO              C.U.I.T. 020-12290006-2...'
-                if "C.U.I.T." in linea and titular_global == "S/D":
-                    parts = linea.split("C.U.I.T.")
-                    if len(parts) > 0:
-                        titular_global = parts[0].strip()
+                # (otros formatos traen "C.U.I.T." solo en su propia línea, con el
+                # nombre en la línea anterior; hay que evitar matchear el C.U.I.T.
+                # del propio banco, que siempre dice "RESPONSABLE INSCRIPTO")
+                if titular_global == "S/D":
+                    linea_strip_tit = linea.strip()
+                    if linea_strip_tit == "C.U.I.T." and linea_previa.strip() and \
+                       "RESPONSABLE INSCRIPTO" not in linea_previa.upper():
+                        titular_global = linea_previa.strip()
+                    elif "C.U.I.T." in linea and "RESPONSABLE INSCRIPTO" not in linea.upper():
+                        parts = linea.split("C.U.I.T.")
+                        if parts[0].strip():
+                            titular_global = parts[0].strip()
 
                 if capturar:
-                    linea = linea.strip()
-                    if re.match(r"^\d{2}/\d{2}/\d{2}", linea):
-                        movimientos.append(linea)
+                    linea_mov = linea.strip()
+                    if re.match(r"^\d{2}/\d{2}/\d{2}", linea_mov):
+                        movimientos.append(linea_mov)
 
                 if "NUMERO DE CUENTA" in linea or "Nro.:" in linea:
                     capturar = True
@@ -58,7 +89,7 @@ def procesar_supervielle(archivo_pdf):
                     if not match:
                         # Intento 2: Formato "Nro.: 00053031-001"
                         match = re.search(r"Nro.:\s*([\d-]+)", linea)
-                    
+
                     if match:
                         cuenta = {}
                         numero_cuenta = match.group(1)
@@ -69,15 +100,9 @@ def procesar_supervielle(archivo_pdf):
                         numero_de_cuenta_temporal = numero_cuenta
 
                 if "Saldo del per" in linea and "anterior" in linea:
-                     # Modificado para permitir espacios o signo negativo al final.
-                    match = re.search(r"([\d\.]+,\d{2}[\-]?)", linea.strip())
+                    match = pattern_monto.search(linea.strip())
                     if match:
-                        importe_raw = match.group(1)
-                        es_negativo = importe_raw.endswith("-")
-                        importe_str = importe_raw.replace("-", "").replace(".", "").replace(",", ".")
-                        importe = float(importe_str)
-                        if es_negativo: importe *= -1
-
+                        importe = parse_monto_local(match.group(0))
                         resultado = next(
                             (d for d in cuentas if d["cuenta"] == numero_de_cuenta_temporal),
                             None,
@@ -95,14 +120,9 @@ def procesar_supervielle(archivo_pdf):
                         movimientos = []
                     capturar = False
 
-                    match = re.search(r"([\d\.]+,\d{2}[\-]?)", linea.strip())
+                    match = pattern_monto.search(linea.strip())
                     if match:
-                        importe_raw = match.group(1)
-                        es_negativo = importe_raw.endswith("-")
-                        importe_str = importe_raw.replace("-", "").replace(".", "").replace(",", ".")
-                        importe = float(importe_str)
-                        if es_negativo: importe *= -1
-
+                        importe = parse_monto_local(match.group(0))
                         resultado = next(
                             (d for d in cuentas if d["cuenta"] == numero_de_cuenta_temporal),
                             None,
@@ -110,49 +130,42 @@ def procesar_supervielle(archivo_pdf):
                         if resultado:
                             resultado["saldo_final"] = importe
 
+                linea_previa = linea
+
             def procesar_movimientos(movimientos_cuenta, saldo_inicial):
                 movimientos_limpios = []
                 # El saldo inicial viene del header "Saldo del período anterior"
-                saldo_actual_calculado = saldo_inicial 
-                
-                # Regex para montos: numeros con puntos y coma decimal, OPCIONALMENTE signo menos al final
-                # Agregamos ?: al grupo externo para no capturarlo si usamos findall
-                pattern_monto = re.compile(r"((?:\d{1,3}(?:\.\d{3})*)?,\d{2}-?)")
+                saldo_actual_calculado = saldo_inicial
 
                 for movimiento in movimientos_cuenta:
-                    # Formato esperado: "03/02/25  Descripcion....   Importe   Saldo"
-                    
+                    # El orden de fecha/importe/saldo/descripción varía según el
+                    # extracto (algunos listan los montos antes de la descripción),
+                    # así que los montos se detectan sin asumir una posición fija.
                     matches = pattern_monto.findall(movimiento)
-                    
+
+                    fecha = movimiento[:8]
+                    resto = movimiento[9:].strip()
+
                     if len(matches) >= 2:
                         # LOGICA ESTANDAR: Tiene Importe y Saldo (al menos 2 montos)
                         # Asumimos que el ULTIMO es el Saldo Resultante
                         saldo_str_raw = matches[-1]
-                        
-                        es_negativo_saldo = saldo_str_raw.endswith("-")
-                        saldo_limpio = saldo_str_raw.replace("-", "").replace(".", "").replace(",", ".")
-                        saldo_linea = float(saldo_limpio)
-                        if es_negativo_saldo: saldo_linea *= -1
-                        
+                        saldo_linea = parse_monto_local(saldo_str_raw)
+
                         # Calculamos el importe por diferencia de saldos
                         # Importe = Saldo_Linea - Saldo_Anterior
                         importe_calculado = saldo_linea - saldo_actual_calculado
-                        
-                        # Limpiar descripcion
-                        fecha = movimiento[:8]
-                        resto = movimiento[9:].strip()
-                        
-                        # Intentar limpiar tokens finales (saldos/importes) de la descripcion
-                        # Si la descripcion termina con el saldo encontrado, lo quitamos
-                        if resto.endswith(saldo_str_raw):
-                             resto = resto[:len(resto)-len(saldo_str_raw)].strip()
-                        
+
+                        # Descripción: todo lo que queda al quitar los montos
+                        descripcion = pattern_monto.sub('', resto).strip()
+                        descripcion = re.sub(r'\s{2,}', ' ', descripcion).strip()
+
                         mov_obj = {
                             "Fecha": fecha,
-                            "Descripcion": resto.split("   ")[0], 
+                            "Descripcion": descripcion,
                             "Importe": importe_calculado
                         }
-                        
+
                         movimientos_limpios.append(mov_obj)
                         saldo_actual_calculado = saldo_linea
 
@@ -163,34 +176,25 @@ def procesar_supervielle(archivo_pdf):
                         # Y NO actualizamos saldo_actual_calculado porque la cadena de saldos parece saltar estos movimientos.
 
                         monto_str_raw = matches[0]
-                        es_negativo_monto = monto_str_raw.endswith("-")
-                        monto_limpio = monto_str_raw.replace("-", "").replace(".", "").replace(",", ".")
-                        importe_directo = float(monto_limpio)
-                        if es_negativo_monto: importe_directo *= -1
-                        
-                        fecha = movimiento[:8]
-                        resto = movimiento[9:].strip()
-                        
-                        # Limpiar descripcion del monto al final
-                        if resto.endswith(monto_str_raw):
-                             resto = resto[:len(resto)-len(monto_str_raw)].strip()
-                        
-                        descripcion = resto.split("   ")[0]
+                        importe_directo = parse_monto_local(monto_str_raw)
+
+                        descripcion = pattern_monto.sub('', resto).strip()
+                        descripcion = re.sub(r'\s{2,}', ' ', descripcion).strip()
 
                         # HEURISTICA DE SIGNO: Si no vino con signo negativo explicito,
                         # intentamos deducir si es DEBITO por palabras clave en la descripcion.
                         # (Si ya es negativo, lo dejamos asi)
-                        if not es_negativo_monto:
+                        if importe_directo >= 0:
                             # Palabras clave que indican SALIDA de dinero (Debito)
                             keywords_debito = [
-                                "Impuesto", "IVA", "Comision", "Gasto", "Débito", 
+                                "Impuesto", "IVA", "Comision", "Gasto", "Débito",
                                 "Retencion", "Percep", "IIBB", "Sellos", "Mantenimiento",
-                                "Cheque Rechazado", "Debito", "DEB", "Credito DEBIN" 
+                                "Cheque Rechazado", "Debito", "DEB", "Credito DEBIN"
                             ]
                             # Agregue mas keywords
                             if any(kw.lower() in descripcion.lower() for kw in keywords_debito):
                                 importe_directo *= -1
-                        
+
                         mov_obj = {
                             "Fecha": fecha,
                             "Descripcion": descripcion,
