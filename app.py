@@ -28,6 +28,7 @@ from patagonia_3 import procesar_patagonia_formato_3
 from brubank import procesar_brubank
 from sol import procesar_sol
 from uala import procesar_uala
+from cocos import procesar_cocos
 
 st.set_page_config(page_title="Movimientos Bancos", page_icon="🏦")
 
@@ -37,6 +38,7 @@ bancos = [
     "BBVA Frances",
     "Brubank",
     "Ciudad",
+    "Cocos",
     "Comafi",
     "Credicoop",
     "Credicoop (Formato 2)",
@@ -125,6 +127,8 @@ def procesar_banco(banco_seleccionado, archivo_pdf):
         return procesar_sol(archivo_pdf)
     elif banco_seleccionado == "Ualá":
         return procesar_uala(archivo_pdf)
+    elif banco_seleccionado == "Cocos":
+        return procesar_cocos(archivo_pdf)
     else:
         st.info(f"Lógica para {banco_seleccionado} aún no implementada")
         return None
